@@ -1,0 +1,557 @@
+
+--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- TRAITEMENT DES DONNEES AE JOURNALIER -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+-- SET hive.auto.convert.join=false;
+-- SET mapred.compress.map.output=true;
+-- SET hive.exec.parallel = true;
+-- SET hive.groupby.skewindata=true;
+-- SET hive.optimize.skewjoin = true;
+-- set hive.execution.engine=tez;
+-- set mapreduce.job.reduces=1000;
+-- set hive.map.aggr=false;
+-- drop table if exists z_lab_drm_hive_temp.dm_ae_daliy;
+-- create table if not exists  z_lab_drm_hive_temp.dm_ae_daliy as 
+-- select 
+    -- sim_imsi,
+	-- max(gps_lat) as max_gps_lat, 
+	-- min(gps_lat) as min_gps_lat, 
+	-- max(gps_lon) as max_gps_lon,	
+	-- min(gps_lon) as min_gps_lon,
+	-- sum(case when gps_lat is not null then 1 else 0 end) as nb_mesure_total_gps_actif,
+	-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),1,4) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),1,4) end as year,
+	-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),6,2) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),6,2) end as month,
+	-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),9,2) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),9,2) end as day
+-- FROM z_app_bdf_hive_socle_phaeton.fai_phaeton_coverage
+-- where
+-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),1,4) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),1,4) end  = ${Y}
+-- and 
+-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),6,2) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),6,2) end = ${M}
+-- and 
+-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),9,2) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),9,2) end  = ${D}
+-- and gps_lat is not null and country_code = 'FR' and gps_radius < 50                              
+-- group by 
+    -- sim_imsi,
+	-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),1,4) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),1,4) end,
+	-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),6,2) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),6,2) end,
+	-- case when LENGTH(gps_tm)=13 then substr(from_unixtime(CAST((gps_tm/1000) AS BIGINT)),9,2) 
+								  -- else substr(from_unixtime(CAST(gps_tm AS BIGINT)),9,2) end;	
+--
+-- drop table if exists z_lab_drm_hive_temp.dm_ae_distance_daliy;
+-- create table if not exists z_lab_drm_hive_temp.dm_ae_distance_daliy as 
+-- select
+	-- ae.*,
+	-- 6371 * acos( sin(radians(min_gps_lat))* sin(radians(max_gps_lat)) + 
+				 -- cos(radians(min_gps_lat))* cos(radians(max_gps_lat))* cos(radians(max_gps_lon)- radians(min_gps_lon))	)
+	-- as distance_diag
+-- FROM z_lab_drm_hive_temp.dm_ae_daliy ae;
+-- drop table if exists z_lab_drm_hive_temp.dm_ae_distance_mobile_daliy ;
+-- create table if not exists z_lab_drm_hive_temp.dm_ae_distance_mobile_daliy as
+-- with ae as (
+-- select 
+   -- a.sim_imsi,a.distance_diag,a.year,a.month,a.day,
+   -- b.gps_lat,b.gps_lon,zip_code,city,rad_lac,
+   -- case when LENGTH(b.gps_tm)=13 then cast((b.gps_tm/1000) as bigint) else b.gps_tm end as gps_tm
+-- FROM z_lab_drm_hive_temp.dm_ae_distance_daliy a
+-- LEFT JOIN z_app_bdf_hive_socle_phaeton.fai_phaeton_coverage b
+-- ON  b.sim_imsi = a.sim_imsi and a.year=b.year and a.month = b.month and a.day = b.day 
+-- WHERE a.distance_diag > 10 and b.gps_lat is not null and b.country_code = 'FR' and b.gps_radius < 50 
+-- and
+	-- if (LENGTH(b.gps_tm)=13,substr(from_unixtime(CAST((b.gps_tm/1000) AS BIGINT)),1,4),substr(from_unixtime(CAST(b.gps_tm AS BIGINT)),1,4))= ${Y}
+	-- and
+	-- if (LENGTH(b.gps_tm)=13,substr(from_unixtime(CAST((b.gps_tm/1000) AS BIGINT)),6,2),substr(from_unixtime(CAST(b.gps_tm AS BIGINT)),6,2)) = ${M}
+	-- and
+	-- if (LENGTH(b.gps_tm)=13,substr(from_unixtime(CAST((b.gps_tm/1000) AS BIGINT)),9,2),substr(from_unixtime(CAST(b.gps_tm AS BIGINT)),9,2)) = ${D}
+-- )
+-- select ae.*,row_number() over (partition by sim_imsi order by gps_tm asc) as row_num from ae;
+--
+-- drop table if exists z_lab_drm_hive_temp.dm_ae_daliy_route;
+-- create table if not exists z_lab_drm_hive_temp.dm_ae_daliy_route
+-- stored as TEXTFILE 
+-- as 
+-- with a as
+-- (      
+   -- select 
+	-- sim_imsi,gps_tm,zip_code,city,rad_lac,gps_lon,gps_lat,row_num,
+	-- CASE WHEN (gps_tm - LAG(gps_tm) over (PARTITION BY sim_imsi ORDER BY row_num)) <= 3600 then  ( gps_tm - LAG(gps_tm) over (PARTITION BY sim_imsi ORDER BY row_num)) else null end as d_tm,
+	-- CASE WHEN (gps_tm - LAG(gps_tm) over (PARTITION BY sim_imsi ORDER BY row_num)) <= 3600 then 
+	-- (
+	  -- 6371 * acos( sin(radians(gps_lat))* sin(radians(lag(gps_lat) over (PARTITION BY sim_imsi  ORDER BY row_num) )) + 
+				   -- cos(radians(gps_lat))* cos(radians(lag(gps_lat) over (PARTITION BY sim_imsi ORDER BY row_num) )) * cos( radians(lag(gps_lon) over (PARTITION BY sim_imsi ORDER BY row_num)) - radians(gps_lon)) )
+	 -- ) else null end as distance,
+	-- CASE WHEN (gps_tm - LAG(gps_tm) over (PARTITION BY sim_imsi ORDER BY row_num)) <= 3600 then 
+	-- COALESCE(
+	-- (6371 * acos(sin(radians(gps_lat))* sin(radians(lag(gps_lat)over (PARTITION BY sim_imsi ORDER BY row_num) )) + 
+				 -- cos(radians(gps_lat))* cos(radians(lag(gps_lat) over (PARTITION BY sim_imsi ORDER BY row_num)))* cos(radians(lag(gps_lon)over (PARTITION BY sim_imsi ORDER BY row_num))- radians(gps_lon)))/((gps_tm - lag(gps_tm,1,0) over (PARTITION BY sim_imsi ORDER BY row_num))/3600)),0) else null end as vitesse,
+	-- distance_diag,year,month,day
+-- from z_lab_drm_hive_temp.dm_ae_distance_mobile_daliy
+-- where 	 
+        -- year = ${Y}
+        -- and 
+		-- month = ${M}  
+        -- and 
+		-- day = ${D}
+-- )
+-- select * from a where (d_tm is not null and distance is not null) and d_tm !=0 and distance !=0 and vitesse >=30;
+
+--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- JGS ARCEP et SNCF -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+-- set hive.execution.engine=tez;
+-- set mapreduce.job.reduces=1000;
+-- add jar hdfs:/user/a_lab_drm_hdfs/socle/udtf/esri-geometry-api-1.2.1.jar;
+-- add jar hdfs:/user/a_lab_drm_hdfs/socle/udtf/spatial-sdk-hive-1.2.0.jar;
+-- add jar hdfs:/user/a_lab_drm_hdfs/socle/udtf/spatial-sdk-json-1.2.0.jar;
+-- DROP TEMPORARY FUNCTION IF EXISTS ST_Point;
+-- DROP TEMPORARY FUNCTION IF EXISTS ST_Distance;
+-- DROP TEMPORARY FUNCTION IF EXISTS ST_GeomFromText;
+-- CREATE TEMPORARY FUNCTION ST_POINT AS 'com.esri.hadoop.hive.ST_Point';
+-- CREATE TEMPORARY FUNCTION ST_DISTANCE AS 'com.esri.hadoop.hive.ST_Distance';
+-- CREATE TEMPORARY FUNCTION ST_GEOMFROMTEXT AS 'com.esri.hadoop.hive.ST_GeomFromText';
+-- drop table if exists z_lab_drm_hive_temp.dm_autoroutes_resultat_jointure_spatiale;
+-- create table if not exists z_lab_drm_hive_temp.dm_autoroutes_resultat_jointure_spatiale 
+-- as
+-- select
+	-- ae.sim_imsi,
+	-- ae.gps_tm,
+	-- ae.zip_code,
+	-- ae.city,
+    -- ae.rad_lac,
+	-- ae.gps_lat,
+	-- ae.gps_lon,
+	-- ae.vitesse,
+	-- ae.year,
+	-- ae.month,
+	-- ae.day,
+	-- a.num_route,
+	-- ST_DISTANCE(geo_wkt , lon_lat_point) as dist_pt_to_geo_arcep
+-- from   
+  -- (
+   -- select sim_imsi,gps_tm,zip_code,city,rad_lac,gps_lat,gps_lon,vitesse,year,month,day,
+		  -- ST_POINT(cast(gps_lon as String),cast(gps_lat as String) ) as lon_lat_point 
+   -- from z_lab_drm_hive_temp.dm_ae_daliy_route
+   -- group by sim_imsi,gps_tm,zip_code,city,rad_lac,gps_lat,gps_lon,vitesse,year,month,day
+   -- sort by sim_imsi
+   -- ) ae
+  -- CROSS JOIN 
+  -- (
+   -- select ST_GeomFromText(wkt) as geo_wkt,num_route
+   -- from z_lab_drm_hive_socle.ref_autoroutes_nettoye
+   -- ) a;
+--
+
+-- set hive.execution.engine=tez;
+-- set mapreduce.job.reduces=1000;
+-- add jar hdfs:/user/a_lab_drm_hdfs/socle/udtf/esri-geometry-api-1.2.1.jar;
+-- add jar hdfs:/user/a_lab_drm_hdfs/socle/udtf/spatial-sdk-hive-1.2.0.jar;
+-- add jar hdfs:/user/a_lab_drm_hdfs/socle/udtf/spatial-sdk-json-1.2.0.jar;
+-- DROP TEMPORARY FUNCTION IF EXISTS ST_Point;
+-- DROP TEMPORARY FUNCTION IF EXISTS ST_Distance;
+-- DROP TEMPORARY FUNCTION IF EXISTS ST_GeomFromText;
+-- CREATE TEMPORARY FUNCTION ST_POINT AS 'com.esri.hadoop.hive.ST_Point';
+-- CREATE TEMPORARY FUNCTION ST_DISTANCE AS 'com.esri.hadoop.hive.ST_Distance';
+-- CREATE TEMPORARY FUNCTION ST_GEOMFROMTEXT AS 'com.esri.hadoop.hive.ST_GeomFromText';
+-- drop table if exists z_lab_drm_hive_temp.dm_sncf_resultat_jointure_spatiale;
+-- create table if not exists  z_lab_drm_hive_temp.dm_sncf_resultat_jointure_spatiale 
+-- as
+-- select
+	-- ae.sim_imsi,
+	-- ae.gps_tm,
+	-- ae.zip_code,
+	-- ae.city,
+	-- ae.rad_lac,
+	-- ae.gps_lat,
+	-- ae.gps_lon,
+	-- ae.vitesse,
+	-- ae.year,
+	-- ae.month,
+	-- ae.day,
+	-- a.code_ligne,
+	-- a.rg_troncon,
+	-- a.libelle_li,
+    -- a.vmax,
+	-- ST_DISTANCE(geo_wkt , lon_lat_point) as dist_pt_to_geo_sncf
+-- from   
+  -- (
+    -- select sim_imsi,gps_tm,zip_code,city,rad_lac,gps_lat,gps_lon,vitesse,year,month,day,
+		  -- ST_POINT(cast(gps_lon as String),cast(gps_lat as String) ) as lon_lat_point 
+   -- from  z_lab_drm_hive_temp.dm_ae_daliy_route
+   -- group by sim_imsi,gps_tm,zip_code,city,rad_lac,gps_lat,gps_lon,vitesse,year,month,day
+   -- sort by sim_imsi
+   -- ) ae
+  -- CROSS JOIN 
+  -- (
+   -- select ST_GeomFromText(wkt) as geo_wkt,code_ligne,rg_troncon,libelle_li,avg_vmax as vmax
+   -- from z_lab_drm_hive_socle.ref_sncf_nettoye
+   -- ) a;
+   
+  
+--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- NETTOYAGE DU JGS *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+-- set mapreduce.job.reduces=1000;
+-- drop table if exists z_lab_drm_hive_temp.dm_ae_sncf_resultat; 
+-- create table if not exists z_lab_drm_hive_temp.dm_ae_sncf_resultat as 
+ -- with b as 
+        -- (	select sim_imsi,gps_tm,min(dist_pt_to_geo_sncf) as dist_pt_to_geo_sncf
+	       -- from  z_lab_drm_hive_temp.dm_sncf_resultat_jointure_spatiale
+	       -- GROUP BY sim_imsi,gps_tm
+        -- )
+-- ,c as 
+-- (
+        -- select 
+                -- b.*,a.vitesse,a.gps_lat,a.gps_lon,a.zip_code,a.city,a.rad_lac,a.year,a.month,a.day,a.code_ligne,a.rg_troncon,a.vmax,a.libelle_li,
+                -- row_number() over (partition by b.sim_imsi,b.gps_tm,b.dist_pt_to_geo_sncf order by b.gps_tm) as idx
+        -- from b
+        -- left join z_lab_drm_hive_temp.dm_sncf_resultat_jointure_spatiale a
+        -- on b.dist_pt_to_geo_sncf = a.dist_pt_to_geo_sncf and
+	       -- a.sim_imsi = b.sim_imsi and
+	       -- a.gps_tm = b.gps_tm
+-- )
+-- select *,row_number() over (partition by sim_imsi order by gps_tm asc) as row_num
+-- from c where c.idx=1;
+
+-- set mapreduce.job.reduces=1000;
+-- drop table if exists z_lab_drm_hive_temp.dm_ae_autoroutes_resultat; 
+-- create table if not exists z_lab_drm_hive_temp.dm_ae_autoroutes_resultat as 
+-- with b as 
+        -- (	select sim_imsi,gps_tm,min(dist_pt_to_geo_arcep) as dist_pt_to_geo_arcep
+	       -- from  z_lab_drm_hive_temp.dm_autoroutes_resultat_jointure_spatiale
+	       -- GROUP BY sim_imsi,gps_tm
+        -- ),c as 
+-- (
+        -- select 
+                -- b.*,a.vitesse,a.gps_lat,a.gps_lon,a.zip_code,a.city,a.rad_lac,a.year,a.month,a.day,a.num_route,
+                -- row_number() over (partition by b.sim_imsi,b.gps_tm,b.dist_pt_to_geo_arcep order by b.gps_tm) as idx
+        -- from b
+        -- left join z_lab_drm_hive_temp.dm_autoroutes_resultat_jointure_spatiale a
+        -- on b.dist_pt_to_geo_arcep = a.dist_pt_to_geo_arcep and
+	       -- a.sim_imsi = b.sim_imsi and
+	       -- a.gps_tm = b.gps_tm
+-- )
+-- select *,row_number() over (partition by sim_imsi order by gps_tm asc) as row_num  
+-- from c 
+-- where c.idx=1;
+
+
+
+--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- SESSIONALISATION -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+-- SET mapreduce.job.reduces=1000;
+-- SET hive.auto.convert.join=false;
+-- DROP TABLE if exists z_lab_drm_hive_temp.dm_ae_autoroutes_bi_session; 
+-- CREATE TABLE if not exists  z_lab_drm_hive_temp.dm_ae_autoroutes_bi_session as 
+-- with a as
+	-- (
+		-- SELECT *,
+		-- CASE WHEN (
+					-- gps_tm - LAG(gps_tm,1,gps_tm) over (PARTITION BY sim_imsi ORDER BY row_num) <= 3600 and 
+					-- (
+						-- (dist_pt_to_geo_arcep <= 0.001 and 
+						-- LAG(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 and
+						-- LAG(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001) 
+						-- or
+						-- (dist_pt_to_geo_arcep <= 0.001 and 
+						-- LEAD(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 and
+						-- LEAD(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001)
+						-- or
+						-- (dist_pt_to_geo_arcep <= 0.001 and 
+						-- LEAD(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 and
+						-- LAG(dist_pt_to_geo_arcep)  over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 )
+					-- )
+				-- )
+	    -- THEN 1 ELSE 0 END AS bi_score_1,
+		-- CASE WHEN (
+					-- gps_tm - LAG(gps_tm,1,gps_tm) over (PARTITION BY sim_imsi ORDER BY row_num) > 3600 or
+					-- (
+						-- (dist_pt_to_geo_arcep > 0.001 and 
+						-- LAG(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) > 0.001 and
+						-- LAG(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) > 0.001) 
+						-- or
+						-- (dist_pt_to_geo_arcep > 0.001 and 
+						-- LEAD(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) > 0.001 and
+						-- LEAD(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) > 0.001)
+						-- or
+						-- (dist_pt_to_geo_arcep > 0.001 and 
+						-- LEAD(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) > 0.001 and
+						-- LAG(dist_pt_to_geo_arcep)  over (PARTITION BY sim_imsi ORDER BY row_num) > 0.001 )
+					-- )
+				  -- )
+	    -- THEN 0 ELSE 1 END AS bi_score_2,
+	    -- CASE WHEN (
+						-- (
+							-- dist_pt_to_geo_arcep <= 0.001 and 
+							-- (
+								-- ( LAG(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 or LEAD(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001)
+								-- or 
+								-- ( LAG(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 or LEAD(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 )
+							-- )
+						-- ) 
+						-- or
+						-- (
+							-- dist_pt_to_geo_arcep > 0.001 and 
+							-- (
+								-- ( LAG(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 and LEAD(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001)
+								-- or 
+								-- ( LAG(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 and LEAD(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 )
+								-- or
+								-- ( LAG(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 and LEAD(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001)
+								-- or
+								-- ( LAG(dist_pt_to_geo_arcep,2) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001 and LEAD(dist_pt_to_geo_arcep) over (PARTITION BY sim_imsi ORDER BY row_num) <= 0.001)
+							-- )
+						-- ) 					
+				-- )
+	    -- THEN 1 ELSE 0 END as bi_score_3,
+		-- CASE WHEN num_route=LEAD(num_route,1,num_route) over (PARTITION BY sim_imsi ORDER BY row_num) THEN 0 ELSE -3 END as bi_score_4
+		-- FROM  z_lab_drm_hive_temp.dm_ae_autoroutes_resultat_test
+		-- WHERE vitesse <= 160 ),
+-- b as  
+-- (	    SELECT 
+		-- a.*, 
+		-- CASE WHEN (bi_score_1+bi_score_2+ bi_score_3)<2
+		-- THEN NULL ELSE
+		 -- (
+			  -- CASE WHEN  ((bi_score_1+bi_score_2+bi_score_3)=LAG(bi_score_1+bi_score_2+bi_score_3) over (PARTITION BY sim_imsi ORDER BY row_num)  or  abs((bi_score_1+bi_score_2+bi_score_3)-LAG(bi_score_1+bi_score_2+bi_score_3) over (PARTITION BY sim_imsi ORDER BY row_num))=1 )
+			  -- THEN 0 ELSE 1 END
+		 -- )
+		-- END AS bi_score_session,
+		-- CASE WHEN (bi_score_1+bi_score_2+ bi_score_3+bi_score_4)<2
+		-- THEN NULL ELSE 
+		-- (
+			-- CASE WHEN (bi_score_1+bi_score_2+bi_score_3+bi_score_4)=LAG(bi_score_1+bi_score_2+bi_score_3+bi_score_4) over (PARTITION BY sim_imsi,num_route ORDER BY row_num)
+			-- THEN 0 ELSE 1 END)
+		 -- END AS bi_score_session_fine from a
+-- )
+-- select 
+	   -- sim_imsi,gps_tm,dist_pt_to_geo_arcep,vitesse,num_route,bi_score_session,bi_score_session_fine,
+	   -- row_number() over (PARTITION BY sim_imsi order by gps_tm asc) as row_num,
+       -- SUM(bi_score_session) over (PARTITION BY sim_imsi ORDER BY row_num rows between unbounded preceding and current row) AS session_id_large,
+	   -- SUM(bi_score_session_fine) over (PARTITION BY sim_imsi ORDER BY row_num rows between unbounded preceding and current row) AS session_id_fine,
+	   -- gps_lat,gps_lon,zip_code,city,rad_lac,year,month,day from b
+	   -- where bi_score_session is not null;
+
+------------
+
+-- DROP TABLE if exists z_lab_drm_hive_temp.dm_ae_sncf_session; 
+-- CREATE TABLE if not exists z_lab_drm_hive_temp.dm_ae_sncf_session as 
+-- SELECT 
+	-- b.sim_imsi,b.gps_tm,b.session_id,b.bi_score,b.gps_lat,b.gps_lon,b.zip_code,b.city,b.rad_lac,
+	-- b.code_ligne,b.rg_troncon,b.libelle_li,b.year,b.month,b.day,
+	-- row_number() over (PARTITION BY b.sim_imsi order by b.gps_tm asc) as row_num 
+-- FROM
+-- (	SELECT 
+		-- a.*, 
+		-- SUM(case when a.bi_score is null then 1 else a.bi_score end) over (PARTITION BY a.sim_imsi ORDER BY a.gps_tm rows between unbounded preceding and current row) AS session_id
+	-- FROM
+	-- (
+		-- SELECT *,
+		-- CASE WHEN (gps_tm - LAG(gps_tm) over (PARTITION BY sim_imsi ORDER BY row_num)) <= 3600 
+		-- then  (CASE WHEN sim_imsi = LAG(sim_imsi) over(PARTITION BY sim_imsi ORDER BY row_num) THEN 0 ELSE 1 END) else null end AS bi_score
+		-- FROM  z_lab_drm_hive_temp.dm_ae_sncf_resultat
+		-- where dist_pt_to_geo_sncf <= 0.001 and vitesse <= (vmax+30)
+	-- ) a
+-- ) b;
+
+-- DROP TABLE IF EXISTS z_lab_drm_hive_temp.dm_ae_sncf_session_new;
+-- CREATE TABLE if not exists z_lab_drm_hive_temp.dm_ae_sncf_session_new as 
+-- with l as 
+-- (
+	-- SELECT 
+			-- sim_imsi,session_id,gps_tm,year,month,day,
+			-- (SUM(case when bi_score = 0 then 1 else 0 end) over (PARTITION BY sim_imsi,session_id order by session_id )+1) as score,
+			-- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN gps_tm ELSE null END AS tm_debut,
+			-- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN rad_lac ELSE null END AS lac_debut,
+			-- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN gps_lat ELSE null END AS lat_debut,
+			-- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN gps_lon ELSE null END AS lon_debut
+	-- FROM z_lab_drm_hive_temp.dm_ae_sncf_session
+-- ),
+-- r as 
+-- (
+	-- SELECT 
+			-- sim_imsi,session_id,gps_tm,year,month,day,
+			-- (SUM(case when bi_score = 0 then 1 else 0 end) over (PARTITION BY sim_imsi,session_id order by session_id)+1) as score, 
+			-- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN gps_tm ELSE null END AS tm_fin,
+			-- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN rad_lac ELSE null END AS lac_fin,
+			-- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN gps_lat ELSE null END AS lat_fin,
+			-- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN gps_lon ELSE null END AS lon_fin
+	-- FROM z_lab_drm_hive_temp.dm_ae_sncf_session
+-- )
+-- SELECT 
+	-- l.sim_imsi,l.score,l.year,l.month,l.day,
+	-- (tm_fin - tm_debut) as duree,
+	-- from_unixtime(tm_debut) as tm_debut,
+	-- from_unixtime(tm_fin) as tm_fin,
+	-- lat_debut,lat_fin,lac_debut,lac_fin,lon_debut,lon_fin,'train' as type
+-- from l
+-- join r 
+-- on 
+	-- l.sim_imsi = r.sim_imsi and 
+	-- l.session_id = r.session_id	
+-- where 
+	-- tm_debut is not null and tm_fin is not null and l.score >=3 and r.score>=3; --and (tm_fin - tm_debut)>=60 and (tm_fin - tm_debut) <=36000;
+
+-- DROP TABLE IF EXISTS  z_lab_drm_hive_temp.dm_ae_autoroutes_session_new; 
+-- CREATE TABLE if not exists  z_lab_drm_hive_temp.dm_ae_autoroutes_session_new as 
+-- with l as 
+-- (
+	-- SELECT 
+			-- sim_imsi,session_id,gps_tm,year,month,day,
+			-- (SUM(case when bi_score = 0 then 1 else 0 end) over (PARTITION BY sim_imsi,session_id order by session_id )+1) as score,
+			-- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN gps_tm ELSE null END AS tm_debut,
+            -- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN rad_lac ELSE null END AS lac_debut,
+			-- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN gps_lat ELSE null END AS lat_debut,
+			-- CASE WHEN session_id - lag(session_id,1,0)  over (PARTITION BY sim_imsi ORDER BY row_num) = 1 THEN gps_lon ELSE null END AS lon_debut
+	-- FROM  z_lab_drm_hive_temp.dm_ae_autoroutes_session
+-- ),
+-- r as 
+-- (
+	-- SELECT 
+		-- sim_imsi,session_id,gps_tm,year,month,day,
+		-- (SUM(case when bi_score = 0 then 1 else 0 end) over (PARTITION BY sim_imsi,session_id order by session_id)+1) as score, 
+		-- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN gps_tm ELSE null END AS tm_fin,
+	    -- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN rad_lac ELSE null END AS lac_fin,
+		-- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN gps_lat ELSE null END AS lat_fin,
+		-- CASE WHEN session_id - lead(session_id,1,session_id+1) over (PARTITION BY sim_imsi ORDER BY row_num) = -1 THEN gps_lon ELSE null END AS lon_fin
+        -- FROM  z_lab_drm_hive_temp.dm_ae_autoroutes_session
+-- )
+-- SELECT 
+	-- l.sim_imsi,l.score,l.year,l.month,l.day,
+	-- (tm_fin - tm_debut) as duree,
+	-- from_unixtime(tm_debut) as tm_debut,
+	-- from_unixtime(tm_fin) as tm_fin,
+	-- lat_debut,lat_fin,lac_debut,lac_fin,lon_debut,lon_fin,
+	-- 'autoroute' as type
+-- FROM l
+-- JOIN  r 
+-- ON 
+	-- l.sim_imsi = r.sim_imsi and 
+	-- l.session_id = r.session_id	
+-- WHERE
+	-- tm_debut is not null and tm_fin is not null and l.score >=3 and r.score>=3; --and (tm_fin - tm_debut)>=60 and (tm_fin - tm_debut) <=36000;
+
+	
+	
+--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- TRAITEMENT DE PARALLELISME -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+-- DROP TABLE IF EXISTS  z_lab_drm_hive_temp.dm_ae_chevauchement; 
+-- CREATE TABLE if not exists  z_lab_drm_hive_temp.dm_ae_chevauchement as 
+-- with a as 
+-- (
+	-- select sim_imsi,session_id,score,duree,tm_debut,tm_fin from z_lab_drm_hive_temp.dm_ae_autoroutes_session_new
+-- ),res as
+-- (
+-- select a.*, b.session_id as session_id_s,b.score as score_s,b.duree as duree_s,b.tm_debut as tm_debut_s,b.tm_fin as tm_fin_s ,
+	-- case when (a.tm_debut = b.tm_debut and a.tm_fin = b.tm_fin) then 1 else 0 end as flag_egalite
+-- from  z_lab_drm_hive_temp.dm_ae_sncf_session_new b
+-- inner join a 
+-- on a.sim_imsi = b.sim_imsi
+-- where 
+	-- ((a.tm_debut <= b.tm_debut and a.tm_fin >= b.tm_debut) or 
+	-- (b.tm_debut <= a.tm_debut and b.tm_fin >= a.tm_debut))
+-- )
+-- select *, 
+		-- case 
+			-- when flag_egalite=1 then 'type5'
+			-- when (tm_debut <= tm_debut_s and tm_fin >= tm_fin_s and flag_egalite=0) then 'type1'
+			-- when (tm_debut <= tm_debut_s and tm_fin <= tm_fin_s and flag_egalite=0) then 'type2'
+			-- when (tm_debut >= tm_debut_s and tm_fin >= tm_fin_s and flag_egalite=0) then 'type3'
+			-- else  'type4' end as  type_chevauchement from res;
+---
+-- select count(*)  as nb_trajets,type_chevauchement from  z_lab_drm_hive_temp.dm_ae_cheuvauchement
+-- group by type_chevauchement
+-- type1:1106
+-- type2:323
+-- type3:325
+-- type4:163
+-- type5:25
+---*-*-*-*-*-*-*-*-
+
+-- set mapreduce.job.reduces=1000;
+-- DROP TABLE IF EXISTS  z_lab_drm_hive_temp.dm_ae_chevauchement; 
+-- CREATE TABLE if not exists  z_lab_drm_hive_temp.dm_ae_chevauchement as 
+-- with res as
+-- (
+	-- select a.*,
+	-- b.score as score_s,b.duree as duree_s,b.tm_debut as tm_debut_s,b.tm_fin as tm_fin_s,
+	-- b.lat_debut as lat_debut_s,b.lat_fin as lat_fin_s,
+	-- b.lac_debut as lac_debut_s,b.lac_fin as lac_fin_s,b.lon_debut as lon_debut_s,b.lon_fin as lon_fin_s,b.type as type_s,
+	-- case when (a.tm_debut = b.tm_debut and a.tm_fin = b.tm_fin) then 1 else 0 end as flag_egalite
+	-- from  z_lab_drm_hive_temp.dm_ae_sncf_session_new b
+	-- inner join z_lab_drm_hive_temp.dm_ae_autoroutes_session_new a 
+	-- on a.sim_imsi = b.sim_imsi
+	-- where 
+		-- ((a.tm_debut <= b.tm_debut and a.tm_fin >= b.tm_debut) or 
+		-- (b.tm_debut <= a.tm_debut and b.tm_fin >= a.tm_debut))
+-- )
+-- select *,
+	-- case when score > score_s then 'A' else 
+	   -- (case when score < score_s then 'T' else 
+		  -- (case when duree > duree_s then 'A' else 
+			 -- (case when duree < duree_s then 'T' else null end)
+		   -- end )
+		-- end )
+	-- end as decision from res;
+-------------
+
+-- drop table if exists z_lab_drm_hive_temp.dm_ae_session_fusion_tmp;  
+-- create table if not exists  z_lab_drm_hive_temp.dm_ae_session_fusion_tmp as 
+-- select * from z_lab_drm_hive_temp.dm_ae_autoroutes_session_new
+-- where concat(sim_imsi,tm_debut) not in (select concat(sim_imsi,tm_debut) from z_lab_drm_hive_temp.dm_ae_chevauchement);
+-- with b as 
+-- (
+  -- select * from z_lab_drm_hive_temp.dm_ae_sncf_session_new
+  -- where tm_debut not in (select tm_debut_s from z_lab_drm_hive_temp.dm_ae_chevauchement)
+-- )
+-- INSERT INTO z_lab_drm_hive_temp.dm_ae_session_fusion_tmp
+-- select * from b 
+-- ORDER BY year,month,day,sim_imsi,tm_debut;
+-- with c as 
+-- (
+	-- select sim_imsi,case when decision='A' then score else score_s end as score,
+	-- year,month,day,
+	-- case when decision='A' then duree else duree_s end as duree,
+	-- case when decision='A' then tm_debut else tm_debut_s end as tm_debut,
+	-- case when decision='A' then tm_fin else tm_fin_s end as tm_fin,
+	-- case when decision='A' then lat_debut else lat_debut_s end as lat_debut,
+	-- case when decision='A' then lat_fin else lat_fin_s end as lat_fin,
+	-- case when decision='A' then lac_debut else lac_debut_s end as lac_debut,
+	-- case when decision='A' then lac_fin else lac_fin_s end as lac_fin,
+	-- case when decision='A' then lon_debut else lon_debut_s end as lon_debut,
+	-- case when decision='A' then lon_fin else lon_fin_s end as lon_fin,
+	-- case when decision='A' then type else type_s end as type
+-- from z_lab_drm_hive_temp.dm_ae_chevauchement
+-- where decision is not null 
+-- group by 
+	-- sim_imsi,case when decision='A' then score else score_s end,
+	-- year,month,day,
+	-- case when decision='A' then duree else duree_s end,
+	-- case when decision='A' then tm_debut else tm_debut_s end,
+	-- case when decision='A' then tm_fin else tm_fin_s end,
+	-- case when decision='A' then lat_debut else lat_debut_s end,
+	-- case when decision='A' then lat_fin else lat_fin_s end,
+	-- case when decision='A' then lac_debut else lac_debut_s end,
+	-- case when decision='A' then lac_fin else lac_fin_s end,
+	-- case when decision='A' then lon_debut else lon_debut_s end ,
+	-- case when decision='A' then lon_fin else lon_fin_s end,
+	-- case when decision='A' then type else type_s end 
+-- )
+-- INSERT INTO z_lab_drm_hive_temp.dm_ae_session_fusion_tmp
+-- select * from c 
+-- ORDER BY year,month,day,sim_imsi,tm_debut;
+
+-- create table if not exists  z_lab_drm_hive_temp.dimeng_ae_livrable1 as 
+-- select * from z_lab_drm_hive_temp.dm_ae_session_fusion_tmp where duree >=60 and duree <=36000;
+
+
+	
+--*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- SESSIONALISATION FINE -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+
+
+
+
